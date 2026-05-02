@@ -1,0 +1,7 @@
+[
+  {"message": "I made a transfer 3 days ago but the recipient hasn't received the money."},
+  {"message": "My card was blocked and I can't make any payments."},
+  {"message": "Someone made an unauthorized transaction on my account!"},
+  {"message": "I haven't received my refund after returning the product."},
+  {"message": "How do I check my account balance?"}
+]

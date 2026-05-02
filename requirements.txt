@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+torch
+transformers
+peft
+pydantic
