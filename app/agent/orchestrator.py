@@ -26,7 +26,10 @@ class Orchestrator:
             draft_result.draft, intent_result.intent, intent_result.confidence
         )
         router_result = self.router_node.run(
-            priority_result.level, validation_result.valid, intent_result.confidence
+            priority_result.level,
+            validation_result.valid,
+            intent_result.intent,
+            intent_result.confidence,
         )
 
         if router_result.action == "escalate":

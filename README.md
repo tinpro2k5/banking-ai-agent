@@ -1,6 +1,216 @@
 # Banking AI Agent
 
-A FastAPI-based banking AI agent that processes customer requests using Ollama LLM and a multi-node processing pipeline.
+> **Project 3 — Applications of Natural Language Processing in Industry**
+> University of Science, VNU-HCM · Faculty of Information Technology
+
+---
+
+## Objective
+
+This project implements a simple **AI agentic pipeline** for automated customer support in the banking domain. The system receives a customer message, detects the banking intent using a fine-tuned model (from Project 2), retrieves relevant policy information, drafts a response using Ollama, validates it, and decides whether to reply automatically or escalate to a human agent.
+
+---
+
+## System Architecture
+
+### Node & Data-Flow Diagram
+
+```mermaid
+flowchart TD
+    Client(["👤 Client\n(HTTP POST /chat)"])
+
+    subgraph API["🌐 FastAPI  ·  main.py"]
+        EP["@app.post('/chat')\nchat(request: CustomerRequest)\n→ orchestrator.run(message)"]
+    end
+
+    subgraph ORCH["🎛️ Orchestrator  ·  app/agent/orchestrator.py"]
+        direction TB
+        O["Orchestrator.run(message: str)\n→ AgentResponse"]
+    end
+
+    subgraph INTENT["1️⃣ Intent Node  ·  app/nodes/intent_node.py"]
+        IN["IntentNode.run(message)\n\nrequests.POST\n  {INTENT_API_URL}\n  body: {message}\n\nRemote service: Lab 2 fine-tuned classifier\nexposed from Colab via Pinggy\n\n→ IntentResult(intent, confidence)"]
+    end
+
+    subgraph PRIORITY["2️⃣ Priority Node  ·  app/nodes/priority_node.py"]
+        PN["PriorityNode.run(message, intent)\n\nRule-based keyword matching:\n• HIGH  → fraud / stolen / blocked / hack …\n• MED   → failed / refund / wrong amount …\n• LOW   → everything else\n\n→ PriorityResult(level, reason)"]
+    end
+
+    subgraph POLICY["3️⃣ Policy Node  ·  app/nodes/policy_node.py"]
+        POL["PolicyNode.run(intent)\n\nPOLICIES.get(intent, DEFAULT_POLICY)\n(dict lookup in app/data/policies.py)\n\n→ PolicyResult(policy_text)"]
+    end
+
+    subgraph DRAFT["4️⃣ Draft Node  ·  app/nodes/draft_node.py"]
+        DR["DraftNode.run(message, intent, priority, policy)\n\nBuilds structured prompt:\n  'Customer: {message}'\n  'Intent: {intent}'\n  'Priority: {priority}'\n  'Policy: {policy}'\n\nclient.generate(prompt)\n\n→ DraftResult(draft, missing_info)"]
+    end
+
+    subgraph OLLAMA_CLIENT["⚙️ Ollama Client  ·  app/clients/ollama_client.py"]
+        OC["OllamaClient.generate(prompt)\n\nrequests.POST\n  {OLLAMA_BASE_URL}/api/generate\n  body: {model, prompt, stream:false}\n\n→ response.json()['response']"]
+    end
+
+    subgraph OLLAMA_EXT["☁️ External LLM  (Google Colab + Pinggy)"]
+        EXT["Ollama /api/generate\ngpt-oss:20b\nhttp://xxxx.a.free.pinggy.link"]
+    end
+
+    subgraph VALID["5️⃣ Validation Node  ·  app/nodes/validation_node.py"]
+        VN["ValidationNode.run(draft, intent, confidence)\n\nChecks:\n• len(draft) >= 30\n• confidence >= 0.5\n• banking keywords present\n\n→ ValidationResult(valid, issues)"]
+    end
+
+    subgraph ROUTER["6️⃣ Router Node  ·  app/nodes/router_node.py"]
+        RN["RouterNode.run(priority, valid, intent, confidence)\n\nLogic:\n• priority=='high' OR not valid  → 'escalate'\n• intent=='unknown_intent'        → 'ask_more'\n• confidence < 0.6               → 'ask_more'\n• else                           → 'reply'\n\n→ RouterResult(action, reason)"]
+    end
+
+    subgraph REPLY["📤 Final Reply Builder  (inside Orchestrator)"]
+        FR["action == 'escalate' → human-agent message\naction == 'ask_more'  → clarification prompt\naction == 'reply'     → draft_result.draft\n\n→ AgentResponse (full trace + final_reply)"]
+    end
+
+    Client --> EP
+    EP --> O
+    O -->|"message"| INTENT
+    INTENT -->|"IntentResult\n(intent, confidence)"| PRIORITY
+    INTENT -->|"intent"| POLICY
+    INTENT -->|"intent + confidence"| DRAFT
+    INTENT -->|"confidence"| VALID
+    INTENT -->|"confidence"| ROUTER
+    PRIORITY -->|"PriorityResult\n(level, reason)"| DRAFT
+    PRIORITY -->|"level"| ROUTER
+    POLICY -->|"PolicyResult\n(policy_text)"| DRAFT
+    DRAFT -->|"DraftResult\n(draft)"| VALID
+    DRAFT -->|"draft"| FR
+    VALID -->|"ValidationResult\n(valid, issues)"| ROUTER
+    DR -->|"prompt"| OC
+    OC -->|"HTTP POST /api/generate"| EXT
+    EXT -->|"response text"| OC
+    OC -->|"generated text"| DR
+    ROUTER -->|"RouterResult\n(action, reason)"| FR
+    FR -->|"AgentResponse"| EP
+    EP -->|"JSON 200"| Client
+```
+
+---
+
+###  Call-Flow Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI<br/>main.py
+    participant Orch as Orchestrator<br/>orchestrator.py
+    participant INode as IntentNode<br/>intent_node.py
+    participant PNode as PriorityNode<br/>priority_node.py
+    participant PolNode as PolicyNode<br/>policy_node.py
+    participant DNode as DraftNode<br/>draft_node.py
+    participant Ollama as OllamaClient<br/>→ Pinggy → gpt-oss:20b
+    participant VNode as ValidationNode<br/>validation_node.py
+    participant RNode as RouterNode<br/>router_node.py
+
+    User->>API: POST /chat  {message}
+    API->>Orch: orchestrator.run(message)
+
+    Orch->>INode: intent_node.run(message)
+    Note over INode: POST to INTENT_API_URL<br/>remote Lab 2 classifier
+    INode-->>Orch: IntentResult(intent, confidence)
+
+    Orch->>PNode: priority_node.run(message, intent)
+    Note over PNode: keyword matching<br/>high / medium / low
+    PNode-->>Orch: PriorityResult(level, reason)
+
+    Orch->>PolNode: policy_node.run(intent)
+    Note over PolNode: POLICIES.get(intent)
+    PolNode-->>Orch: PolicyResult(policy_text)
+
+    Orch->>DNode: draft_node.run(message, intent, priority, policy)
+    DNode->>Ollama: POST /api/generate {model, prompt, stream:false}
+    Ollama-->>DNode: {response: "..."}
+    DNode-->>Orch: DraftResult(draft, missing_info)
+
+    Orch->>VNode: validation_node.run(draft, intent, confidence)
+    Note over VNode: len check, confidence<br/>check, keyword check
+    VNode-->>Orch: ValidationResult(valid, issues)
+
+    Orch->>RNode: router_node.run(priority, valid, intent, confidence)
+    Note over RNode: escalate / ask_more / reply
+    RNode-->>Orch: RouterResult(action, reason)
+
+    Note over Orch: Build final_reply from action
+    Orch-->>API: AgentResponse (full trace + final_reply)
+    API-->>User: HTTP 200 JSON
+```
+
+---
+
+### 📦 Module Dependency Map
+
+```mermaid
+graph LR
+    subgraph Entry
+        run["run.py\nuvicorn.run()"]
+        main["main.py\nFastAPI app\nPOST /chat"]
+    end
+
+    subgraph Core
+        schemas["core/schemas.py\nCustomerRequest\nIntentResult\nPriorityResult\nPolicyResult\nDraftResult\nValidationResult\nRouterResult\nAgentResponse"]
+        settings["core/settings.py\nOLLAMA_BASE_URL\nOLLAMA_MODEL\nINTENT_API_URL"]
+    end
+
+    subgraph Data
+        policies["data/policies.py\nPOLICIES dict\nDEFAULT_POLICY"]
+    end
+
+    subgraph Clients
+        base["clients/base.py\nBaseLLMClient (ABC)\n.generate(prompt)"]
+        ollama["clients/ollama_client.py\nOllamaClient\n.generate(prompt)"]
+    end
+
+    subgraph Nodes
+        i["nodes/intent_node.py\nIntentNode"]
+        p["nodes/priority_node.py\nPriorityNode"]
+        pol["nodes/policy_node.py\nPolicyNode"]
+        d["nodes/draft_node.py\nDraftNode"]
+        v["nodes/validation_node.py\nValidationNode"]
+        r["nodes/router_node.py\nRouterNode"]
+    end
+
+    subgraph Agent
+        orch["agent/orchestrator.py\nOrchestrator\n.run()"]
+    end
+
+    run --> main
+    main --> orch
+    orch --> i & p & pol & d & v & r
+    i --> schemas & settings
+    p --> schemas
+    pol --> schemas & policies
+    d --> schemas & ollama
+    v --> schemas
+    r --> schemas
+    ollama --> base & settings
+    main --> schemas
+```
+
+---
+
+## 🔄 Node Reference
+
+| # | Node | File | Method signature | Inputs | Output schema |
+|---|------|------|-----------------|--------|---------------|
+| 1 | **Intent** | `nodes/intent_node.py` | `IntentNode.run(message)` | raw text | `IntentResult(intent, confidence)` |
+| 2 | **Priority** | `nodes/priority_node.py` | `PriorityNode.run(message, intent)` | text + intent label | `PriorityResult(level, reason)` |
+| 3 | **Policy** | `nodes/policy_node.py` | `PolicyNode.run(intent)` | intent label | `PolicyResult(policy_text)` |
+| 4 | **Draft** | `nodes/draft_node.py` | `DraftNode.run(message, intent, priority, policy)` | text + intent + level + policy | `DraftResult(draft, missing_info)` |
+| 5 | **Validation** | `nodes/validation_node.py` | `ValidationNode.run(draft, intent, confidence)` | draft text + confidence | `ValidationResult(valid, issues)` |
+| 6 | **Router** | `nodes/router_node.py` | `RouterNode.run(priority, valid, intent, confidence)` | level + bool + intent + confidence | `RouterResult(action, reason)` |
+
+### Router decision logic
+
+```
+priority == "high"  OR  valid == False   →  action = "escalate"
+intent == "unknown_intent"                →  action = "ask_more"
+confidence < 0.6                         →  action = "ask_more"
+otherwise                                →  action = "reply"
+```
+
+---
 
 ## Project Structure
 
@@ -8,83 +218,134 @@ A FastAPI-based banking AI agent that processes customer requests using Ollama L
 banking-ai-agent/
 ├── app/
 │   ├── agent/
-│   │   └── orchestrator.py       # Main orchestrator
+│   │   └── orchestrator.py       # Main pipeline controller (Orchestrator.run)
 │   ├── clients/
-│   │   ├── base.py               # Base client interface
-│   │   └── ollama_client.py       # Ollama LLM client
+│   │   ├── base.py               # Abstract LLM client (BaseLLMClient)
+│   │   └── ollama_client.py      # Ollama HTTP client (OllamaClient.generate)
 │   ├── core/
-│   │   ├── schemas.py            # Pydantic request/response schemas
-│   │   └── settings.py           # Application configuration
+│   │   ├── schemas.py            # Pydantic I/O schemas for all nodes
+│   │   └── settings.py           # OLLAMA_BASE_URL, OLLAMA_MODEL, INTENT_API_URL
 │   ├── data/
-│   │   └── policies.py           # Banking policies and rules
+│   │   └── policies.py           # POLICIES dict + DEFAULT_POLICY
 │   └── nodes/
-│       ├── intent_node.py        # Intent detection
-│       ├── priority_node.py       # Priority assessment
-│       ├── policy_node.py        # Policy validation
-│       ├── draft_node.py         # Response generation
-│       ├── validation_node.py    # Response validation
-│       └── router_node.py        # Request routing
-├── main.py                       # FastAPI app and routes
-├── run.py                        # Entry point
+│       ├── intent_node.py        # IntentNode  — remote Lab 2 classifier API
+│       ├── priority_node.py      # PriorityNode — keyword rule engine
+│       ├── policy_node.py        # PolicyNode  — dict lookup
+│       ├── draft_node.py         # DraftNode   — Ollama prompt + generate
+│       ├── validation_node.py    # ValidationNode — rule checks
+│       └── router_node.py        # RouterNode  — escalation logic
 ├── examples/
-│   └── sample_requests.json      # Sample banking requests
-├── requirements.txt              # Python dependencies
-└── README.md                     # This file
+│   └── sample_requests.json      # Test cases
+├── main.py                       # FastAPI app  (POST /chat, GET /health)
+├── run.py                        # Entry point  (uvicorn on port 6636)
+├── requirements.txt
+└── README.md
 ```
 
-## Setup
+---
 
-1. Install dependencies:
+## ⚙️ Installation & Setup
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/<your-username>/banking-ai-agent.git
+cd banking-ai-agent
+```
+
+### 2. Create a virtual environment and install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Set up environment variables (optional):
+### 3. Start Ollama and the intent classifier on Google Colab
+
+Open `Ollama-Pinggy.ipynb` in Google Colab and run the Ollama cells plus the Lab 2 intent classifier cells. The notebook starts two local services:
+
+| Service | Local port | Purpose |
+|---------|------------|---------|
+| Ollama | `11434` | Draft response generation with `gpt-oss:20b` |
+| Intent classifier | `8000` | Lab 2 fine-tuned intent prediction at `/predict` |
+
+### 4. Expose both services with Pinggy
+
+Create one Pinggy tunnel for Ollama and a second Pinggy tunnel for the intent classifier:
+
 ```bash
-# Create .env file
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama2
-DEBUG=False
+ssh -p 443 -R0:localhost:11434 qr@a.pinggy.io
+ssh -p 443 -R0:localhost:8000 qr@a.pinggy.io
 ```
 
-3. Run the application:
+Copy both generated public URLs into `app/core/settings.py`. The app reads them through the `Settings` class, so these defaults can also be overridden from a local `.env` file.
+
+```python
+OLLAMA_BASE_URL = "http://xxxx.a.free.pinggy.link"
+OLLAMA_MODEL    = "gpt-oss:20b"
+INTENT_API_URL  = "http://yyyy.a.free.pinggy.link/predict"
+```
+
+Optional `.env` override:
+
+```bash
+OLLAMA_BASE_URL=http://xxxx.a.free.pinggy.link
+OLLAMA_MODEL=gpt-oss:20b
+INTENT_API_URL=http://yyyy.a.free.pinggy.link/predict
+```
+
+### 5. Run the server
+
 ```bash
 python run.py
 ```
 
-The API will be available at `http://localhost:8000`
+Server starts at `http://localhost:6636` — interactive docs at `http://localhost:6636/docs`.
+
+---
 
 ## API Endpoints
 
-- `GET /` - Welcome message
-- `POST /process` - Process banking request
-- `GET /health` - Health check
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/chat` | Process a customer message, returns full pipeline trace + final reply |
+| `GET` | `/health` | Health check |
 
-## Processing Pipeline
-
-The agent uses a multi-node pipeline:
-
-1. **Intent Node** - Detects user intent (transfer, balance check, etc.)
-2. **Priority Node** - Assesses request priority
-3. **Policy Node** - Validates against banking policies
-4. **Draft Node** - Generates response
-5. **Validation Node** - Validates response quality
-6. **Router Node** - Routes to appropriate handler
-
-## Example Usage
+### Example request
 
 ```bash
-curl -X POST "http://localhost:8000/process" \
+curl -X POST http://localhost:6636/chat \
   -H "Content-Type: application/json" \
-  -d '{
-    "request_text": "I want to transfer 5000 VND to my friend",
-    "customer_id": "CUST001"
-  }'
+  -d '{"message": "I made a transfer 3 days ago but the recipient has not received the money."}'
 ```
 
-## Requirements
+### Sample requests
 
-- Python 3.8+
-- Ollama (for LLM inference)
-- FastAPI
-- Uvicorn
+See [`examples/sample_requests.json`](examples/sample_requests.json) for test cases covering:
+
+| Message | Expected intent | Expected routing |
+|---------|----------------|-----------------|
+| Transfer not received after 3 days | `transfer_not_received_by_recipient` | `reply` |
+| Card was blocked, can't make payments | `blocked_card` | `escalate` |
+| Unauthorized transaction on my account | `card_payment_wrong_vendor_charged` | `escalate` |
+| Haven't received refund after product return | `refund_not_received` | `reply` |
+| How do I check my account balance? | `balance_not_updated_after_cheque_or_cash_deposit` | `reply` |
+
+---
+
+## Video Demo
+
+**Demo URL:** [Insert your video link here]
+
+The demo covers:
+- Starting the FastAPI server
+- Sending 4 example customer messages via Swagger UI (`/docs`)
+- Walking through each node's output in the JSON trace
+- Demonstrating an escalation case vs. a normal auto-reply case
+
+---
+
+## Authors
+
+| Student ID | Full Name |
+|-----------|-----------|
+| 23120371 | Lê Trung Tín |

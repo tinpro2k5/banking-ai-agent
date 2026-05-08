@@ -1,8 +1,7 @@
 """Ollama client module."""
 import requests
 from app.clients.base import BaseLLMClient
-from app.core.settings import OLLAMA_BASE_URL, OLLAMA_MODEL
-from .base import BaseClient
+from app.core.settings import settings
 
 
 class OllamaClient(BaseLLMClient):
@@ -10,7 +9,7 @@ class OllamaClient(BaseLLMClient):
 
     def generate(self, prompt: str) -> str:
         response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
+            f"{settings.ollama_base_url}/api/generate",
+            json={"model": settings.ollama_model, "prompt": prompt, "stream": False}
         )
         return response.json()["response"]

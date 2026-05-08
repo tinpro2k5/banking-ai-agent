@@ -1,19 +1,27 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
-from app.core.settings import INTENT_MODEL_PATH
+"""Intent detection node — calls the remote intent inference server on Colab."""
+import requests
+from app.core.settings import settings
 from app.core.schemas import IntentResult
 
+
 class IntentNode:
-    def __init__(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(INTENT_MODEL_PATH)
-        self.model = AutoModelForSequenceClassification.from_pretrained(INTENT_MODEL_PATH)
-        self.model.eval()
+    """Calls the remote intent classifier server exposed via Pinggy."""
 
     def run(self, message: str) -> IntentResult:
-        inputs = self.tokenizer(message, return_tensors="pt", truncation=True)
-        with torch.no_grad():
-            logits = self.model(**inputs).logits
-        probs = torch.softmax(logits, dim=-1)
-        confidence, pred = probs.max(dim=-1)
-        intent_label = self.model.config.id2label[pred.item()]
-        return IntentResult(intent=intent_label, confidence=round(confidence.item(), 3))
+        response = requests.post(
+            settings.intent_api_url,
+            json={"message": message},
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        confidence = data.get("confidence")
+        if confidence is not None:
+            try:
+                confidence = float(confidence)
+            except (TypeError, ValueError):
+                confidence = None
+        return IntentResult(
+            intent=data["intent"],
+            confidence=confidence,
+        )

@@ -6,7 +6,7 @@ class CustomerRequest(BaseModel):
 
 class IntentResult(BaseModel):
     intent: str
-    confidence: float
+    confidence: Optional[float] = None
 
 class PriorityResult(BaseModel):
     level: str  # "low" | "medium" | "high"

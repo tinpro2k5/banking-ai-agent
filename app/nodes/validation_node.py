@@ -1,13 +1,15 @@
+from typing import Optional
+
 from app.core.schemas import ValidationResult
 
 class ValidationNode:
-    def run(self, draft: str, intent: str, confidence: float) -> ValidationResult:
+    def run(self, draft: str, intent: str, confidence: Optional[float]) -> ValidationResult:
         issues = []
         if len(draft) < 30:
             issues.append("Draft is too short.")
-        if confidence < 0.5:
+        if confidence is not None and confidence < 0.5:
             issues.append(f"Low intent confidence: {confidence}")
-        if not any(word in draft.lower() for word in ["account", "card", "transfer", "refund", "team", "support", "transaction"]):
+        if not any(word in draft.lower() for word in ["account", "card", "transfer", "refund", "team", "support", "transaction", "bank", "loan", "payment", "balance", "statement", "branch", "customer service"]):
             issues.append("Draft may lack banking-specific content.")
         valid = len(issues) == 0
         return ValidationResult(valid=valid, issues="; ".join(issues) if issues else None)
