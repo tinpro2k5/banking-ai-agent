@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph ORCH["🎛️ Orchestrator  ·  app/agent/orchestrator.py"]
         direction TB
-        O["Orchestrator.run(message: str)\n→ AgentResponse"]
+        O["Orchestrator.run(message: str)\n→ AgentResponse\n\nFinal Reply Builder:\n action == 'escalate' → human-agent message\n action == 'ask_more'  → clarification prompt (uses missing_info when available)\n action == 'reply'     → draft_result.draft"]
     end
 
     subgraph INTENT["1️⃣ Intent Node  ·  app/nodes/intent_node.py"]
@@ -57,12 +57,10 @@ flowchart TD
     end
 
     subgraph ROUTER["6️⃣ Router Node  ·  app/nodes/router_node.py"]
-        RN["RouterNode.run(priority, valid, intent, confidence)\n\nLogic:\n• priority=='high' OR not valid  → 'escalate'\n• intent=='unknown_intent'        → 'ask_more'\n• confidence < 0.6               → 'ask_more'\n• else                           → 'reply'\n\n→ RouterResult(action, reason)"]
+        RN["RouterNode.run(priority, valid, intent, confidence, missing_info)\n\nLogic:\n• priority=='high' OR not valid → 'escalate'\n• missing_info is set           → 'ask_more'\n• intent=='unknown_intent'      → 'ask_more'\n• confidence < 0.6              → 'ask_more'\n• else                          → 'reply'\n\n→ RouterResult(action, reason)"]
     end
 
-    subgraph REPLY["📤 Final Reply Builder  (inside Orchestrator)"]
-        FR["action == 'escalate' → human-agent message\naction == 'ask_more'  → clarification prompt\naction == 'reply'     → draft_result.draft\n\n→ AgentResponse (full trace + final_reply)"]
-    end
+    %% Final Reply Builder is implemented inside the Orchestrator (see ORCH node)
 
     Client --> EP
     EP --> O
@@ -76,14 +74,13 @@ flowchart TD
     PRIORITY -->|"level"| ROUTER
     POLICY -->|"PolicyResult\n(policy_text)"| DRAFT
     DRAFT -->|"DraftResult\n(draft)"| VALID
-    DRAFT -->|"draft"| FR
+    DRAFT -->|"draft"| O
     VALID -->|"ValidationResult\n(valid, issues)"| ROUTER
     DR -->|"prompt"| OC
     OC -->|"HTTP POST /api/generate"| EXT
     EXT -->|"response text"| OC
     OC -->|"generated text"| DR
-    ROUTER -->|"RouterResult\n(action, reason)"| FR
-    FR -->|"AgentResponse"| EP
+    ROUTER -->|"RouterResult\n(action, reason)"| O
     EP -->|"JSON 200"| Client
 ```
 
@@ -128,18 +125,18 @@ sequenceDiagram
     Note over VNode: len check, confidence<br/>check, keyword check
     VNode-->>Orch: ValidationResult(valid, issues)
 
-    Orch->>RNode: router_node.run(priority, valid, intent, confidence)
-    Note over RNode: escalate / ask_more / reply
+    Orch->>RNode: router_node.run(priority, valid, intent, confidence, missing_info)
+    Note over RNode: missing_info / escalate / ask_more / reply
     RNode-->>Orch: RouterResult(action, reason)
 
-    Note over Orch: Build final_reply from action
+    Note over Orch: Build final_reply from action and missing_info
     Orch-->>API: AgentResponse (full trace + final_reply)
     API-->>User: HTTP 200 JSON
 ```
 
 ---
 
-### 📦 Module Dependency Map
+###  Module Dependency Map
 
 ```mermaid
 graph LR
@@ -190,7 +187,7 @@ graph LR
 
 ---
 
-## 🔄 Node Reference
+## Node Reference
 
 | # | Node | File | Method signature | Inputs | Output schema |
 |---|------|------|-----------------|--------|---------------|
@@ -199,15 +196,16 @@ graph LR
 | 3 | **Policy** | `nodes/policy_node.py` | `PolicyNode.run(intent)` | intent label | `PolicyResult(policy_text)` |
 | 4 | **Draft** | `nodes/draft_node.py` | `DraftNode.run(message, intent, priority, policy)` | text + intent + level + policy | `DraftResult(draft, missing_info)` |
 | 5 | **Validation** | `nodes/validation_node.py` | `ValidationNode.run(draft, intent, confidence)` | draft text + confidence | `ValidationResult(valid, issues)` |
-| 6 | **Router** | `nodes/router_node.py` | `RouterNode.run(priority, valid, intent, confidence)` | level + bool + intent + confidence | `RouterResult(action, reason)` |
+| 6 | **Router** | `nodes/router_node.py` | `RouterNode.run(priority, valid, intent, confidence, missing_info)` | level + bool + intent + confidence + draft hints | `RouterResult(action, reason)` |
 
 ### Router decision logic
 
 ```
-priority == "high"  OR  valid == False   →  action = "escalate"
-intent == "unknown_intent"                →  action = "ask_more"
-confidence < 0.6                         →  action = "ask_more"
-otherwise                                →  action = "reply"
+priority == "high"  OR  valid == False  →  action = "escalate"
+missing_info is not None                 →  action = "ask_more"
+intent == "unknown_intent"               →  action = "ask_more"
+confidence < 0.6                          →  action = "ask_more"
+otherwise                                 →  action = "reply"
 ```
 
 ---
@@ -217,27 +215,27 @@ otherwise                                →  action = "reply"
 ```
 banking-ai-agent/
 ├── app/
+│   ├── main.py                       # FastAPI app  (POST /chat, GET /health)
 │   ├── agent/
-│   │   └── orchestrator.py       # Main pipeline controller (Orchestrator.run)
+│   │   └── orchestrator.py           # Main pipeline controller (Orchestrator.run)
 │   ├── clients/
-│   │   ├── base.py               # Abstract LLM client (BaseLLMClient)
-│   │   └── ollama_client.py      # Ollama HTTP client (OllamaClient.generate)
+│   │   ├── base.py                   # Abstract LLM client (BaseLLMClient)
+│   │   └── ollama_client.py          # Ollama HTTP client (OllamaClient.generate)
 │   ├── core/
-│   │   ├── schemas.py            # Pydantic I/O schemas for all nodes
-│   │   └── settings.py           # OLLAMA_BASE_URL, OLLAMA_MODEL, INTENT_API_URL
+│   │   ├── schemas.py                # Pydantic I/O schemas for all nodes
+│   │   └── settings.py               # OLLAMA_BASE_URL, OLLAMA_MODEL, INTENT_API_URL
 │   ├── data/
-│   │   └── policies.py           # POLICIES dict + DEFAULT_POLICY
+│   │   └── policies.py               # BankingPolicies class + POLICIES dict + DEFAULT_POLICY
 │   └── nodes/
-│       ├── intent_node.py        # IntentNode  — remote Lab 2 classifier API
-│       ├── priority_node.py      # PriorityNode — keyword rule engine
-│       ├── policy_node.py        # PolicyNode  — dict lookup
-│       ├── draft_node.py         # DraftNode   — Ollama prompt + generate
-│       ├── validation_node.py    # ValidationNode — rule checks
-│       └── router_node.py        # RouterNode  — escalation logic
+│       ├── intent_node.py            # IntentNode  — remote Lab 2 classifier API
+│       ├── priority_node.py          # PriorityNode — keyword rule engine
+│       ├── policy_node.py            # PolicyNode  — delegates to BankingPolicies
+│       ├── draft_node.py             # DraftNode   — Ollama prompt + generate
+│       ├── validation_node.py        # ValidationNode — rule checks
+│       └── router_node.py            # RouterNode  — escalation logic
 ├── examples/
-│   └── sample_requests.json      # Test cases
-├── main.py                       # FastAPI app  (POST /chat, GET /health)
-├── run.py                        # Entry point  (uvicorn on port 6636)
+│   └── sample_requests.json          # Test cases
+├── run.py                            # Entry point  (uvicorn → app.main:app, port 6636)
 ├── requirements.txt
 └── README.md
 ```
@@ -322,13 +320,53 @@ curl -X POST http://localhost:6636/chat \
 
 See [`examples/sample_requests.json`](examples/sample_requests.json) for test cases covering:
 
-| Message | Expected intent | Expected routing |
-|---------|----------------|-----------------|
-| Transfer not received after 3 days | `transfer_not_received_by_recipient` | `reply` |
-| Card was blocked, can't make payments | `blocked_card` | `escalate` |
-| Unauthorized transaction on my account | `card_payment_wrong_vendor_charged` | `escalate` |
-| Haven't received refund after product return | `refund_not_received` | `reply` |
-| How do I check my account balance? | `balance_not_updated_after_cheque_or_cash_deposit` | `reply` |
+| Message | Detected intent | Priority | Routing |
+|---------|----------------|----------|---------|
+| Transfer with TXN/date provided | `transfer_not_received_by_recipient` | `low` | `ask_more` |
+| Card blocked after OTP check | `declined_card_payment` | `high` | `escalate` |
+| Unauthorized card payment with amount/reference | `card_payment_not_recognised` | `high` | `escalate` |
+| Refund with order/return date provided | `Refund_not_showing_up` | `medium` | `reply` |
+| Balance question in app | `balance_not_updated_after_bank_transfer` | `low` | `reply` |
+| Unclear beeping issue | `unknown_intent` | `low` | `ask_more` |
+
+---
+
+## Testing & Demo Results
+
+### Routing Outcomes
+
+The system successfully demonstrates all three routing decisions:
+
+#### 1. Auto-Reply
+- **Case:** "I returned the product on 2026-05-02 and my refund for order 771245 still has not shown up in my account."
+- **Intent detected:** `Refund_not_showing_up`
+- **Priority:** `medium` → **Action:** `reply`
+- **Output:** returns the drafted banking response as the final reply
+
+- **Case:** "How do I check my account balance in the mobile app?"
+- **Intent detected:** `balance_not_updated_after_bank_transfer`
+- **Priority:** `low` → **Action:** `reply`
+
+#### 2. Escalation
+- **Case:** "My card was blocked after an OTP check, and I need help reactivating it to make a payment today."
+- **Intent detected:** `declined_card_payment`
+- **Priority:** `high` → **Action:** `escalate`
+
+- **Case:** "Someone made an unauthorized card payment of $79.40 on my account ending 4432 yesterday."
+- **Intent detected:** `card_payment_not_recognised`
+- **Priority:** `high` → **Action:** `escalate`
+
+#### 3. Ask More
+- **Case:** "I made transfer TXN-48291 on 2026-05-05 for $250 to account 009182, but the recipient still has not received it."
+- **Intent detected:** `transfer_not_received_by_recipient`
+- **Priority:** `low` → **Action:** `ask_more`
+- **Final reply:** asks for the specific missing details extracted from the draft
+
+- **Case:** "My grandmother's debit card was linked to the app, but the card link keeps failing with an error code."
+- **Intent detected:** `unknown_intent`
+- **Priority:** `low` → **Action:** `ask_more`
+
+All responses include the complete pipeline trace: `intent`, `priority`, `policy`, `draft`, `validation`, `routing`, and `final_reply`.
 
 ---
 
@@ -336,11 +374,17 @@ See [`examples/sample_requests.json`](examples/sample_requests.json) for test ca
 
 **Demo URL:** [Insert your video link here]
 
-The demo covers:
-- Starting the FastAPI server
-- Sending 4 example customer messages via Swagger UI (`/docs`)
-- Walking through each node's output in the JSON trace
-- Demonstrating an escalation case vs. a normal auto-reply case
+### Recording Checklist
+
+- [ ] Start the notebook on Kaggle,, explain that it runs both Ollama and Intent classifier and must use Kaggle 2T4 GPU for sufficient VRAM
+- [ ] Start the server: `python run.py`
+- [ ] Open Swagger UI at `http://localhost:6636/docs`
+- [ ] Send 3–5 sample messages from `examples/sample_requests.json`
+- [ ] Show the full JSON response for at least one auto-reply case
+- [ ] Show an escalation case and its response
+- [ ] Show the three routing decisions (reply, escalate, ask_more)
+- [ ] Walk through one complete node trace (intent → priority → policy → draft → validation → routing)
+**Video should cover:** System overview, architecture, sample inputs/outputs, and the three routing outcomes. Could show the Readme file
 
 ---
 

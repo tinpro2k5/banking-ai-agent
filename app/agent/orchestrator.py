@@ -30,12 +30,19 @@ class Orchestrator:
             validation_result.valid,
             intent_result.intent,
             intent_result.confidence,
+            draft_result.missing_info,
         )
 
         if router_result.action == "escalate":
             final_reply = "Your case has been escalated to a human agent. We will contact you shortly."
         elif router_result.action == "ask_more":
-            final_reply = "Could you please provide more details about your issue so we can assist you better?"
+            if draft_result.missing_info:
+                final_reply = (
+                    "Could you please provide the following details so we can assist you better: "
+                    f"{draft_result.missing_info.replace('Missing: ', '')}?"
+                )
+            else:
+                final_reply = "Could you please provide more details about your issue so we can assist you better?"
         else:
             final_reply = draft_result.draft
 

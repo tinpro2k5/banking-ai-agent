@@ -1,7 +1,8 @@
 [
   {"message": "I made a transfer 3 days ago but the recipient hasn't received the money."},
   {"message": "My card was blocked and I can't make any payments."},
-  {"message": "Someone made an unauthorized transaction on my account!"},
-  {"message": "I haven't received my refund after returning the product."},
-  {"message": "How do I check my account balance?"}
+  {"message": "Someone made an unauthorized card payment of $79.40 on my account ending 4432 yesterday."},
+  {"message": "I returned the product on 2026-05-02 and my refund for order 771245 still has not shown up in my account."},
+  {"message": "How do I check my account balance."},
+  {"message": "My grandmother's account keeps making beeping sounds."}
 ]

@@ -1,7 +1,7 @@
 from app.core.schemas import PriorityResult
 
-HIGH_PRIORITY_KEYWORDS = ["fraud", "stolen", "unauthorized", "blocked", "lost", "scam", "hack"]
-MEDIUM_PRIORITY_KEYWORDS = ["not received", "failed", "error", "wrong amount", "refund"]
+HIGH_PRIORITY_KEYWORDS = ["fraud", "stolen", "unauthorized", "blocked", "lost", "scam", "hack", "compromised", "security", "urgent"]
+MEDIUM_PRIORITY_KEYWORDS = ["not received", "failed", "error", "wrong amount", "refund", "dispute", "delay", "issue", "problem", "help", "support"]
 
 class PriorityNode:
     def run(self, message: str, intent: str) -> PriorityResult:
