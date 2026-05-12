@@ -247,7 +247,7 @@ banking-ai-agent/
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/<your-username>/banking-ai-agent.git
+git clone https://github.com/tinpro2k5/banking-ai-agent.git
 cd banking-ai-agent
 ```
 
@@ -372,21 +372,9 @@ All responses include the complete pipeline trace: `intent`, `priority`, `policy
 
 ## Video Demo
 
-**Demo URL:** [Insert your video link here]
+**Demo URL:** https://drive.google.com/file/d/1Y9iQvukrT1Dbc_lPU7VLvuGLFu1hS-D2/view?usp=sharing
 
-### Recording Checklist
-
-- [ ] Start the notebook on Kaggle,, explain that it runs both Ollama and Intent classifier and must use Kaggle 2T4 GPU for sufficient VRAM
-- [ ] Start the server: `python run.py`
-- [ ] Open Swagger UI at `http://localhost:6636/docs`
-- [ ] Send 3–5 sample messages from `examples/sample_requests.json`
-- [ ] Show the full JSON response for at least one auto-reply case
-- [ ] Show an escalation case and its response
-- [ ] Show the three routing decisions (reply, escalate, ask_more)
-- [ ] Walk through one complete node trace (intent → priority → policy → draft → validation → routing)
-**Video should cover:** System overview, architecture, sample inputs/outputs, and the three routing outcomes. Could show the Readme file
-
----
+**Kaggle Notebook:** https://www.kaggle.com/code/letrungtin2k5/banking-ai-agent-23120371
 
 ## Authors
 
